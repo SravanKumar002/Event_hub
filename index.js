@@ -41,7 +41,12 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Connect to MongoDB and seed defaults
+// Start server immediately so Render health-check passes quickly
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
+
+// Connect to MongoDB in background and seed defaults
 mongoose
   .connect(process.env.MONGODB_URI)
   .then(async () => {
@@ -155,12 +160,7 @@ mongoose
       await Event.insertMany(seedEvents);
       console.log("📦 Seeded", seedEvents.length, "default events");
     }
-
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
-    });
   })
   .catch((err) => {
     console.error("❌ MongoDB connection error:", err.message);
-    process.exit(1);
   });
