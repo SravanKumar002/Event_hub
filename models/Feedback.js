@@ -11,6 +11,7 @@ const feedbackSchema = new mongoose.Schema(
     secondaryAnswer: { type: String, default: "" },
     scaleMax: { type: Number, default: 5 },
     comment: { type: String, default: "" },
+    phone: { type: String, default: "" },
     page: { type: String, default: "general" },
   },
   { timestamps: true },
