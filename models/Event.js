@@ -13,6 +13,7 @@ const eventSchema = new mongoose.Schema(
     ctaText: { type: String, default: "View Details" },
     instructions: { type: String, default: "" },
     duration: { type: String, default: "" },
+    googleMapsLink: { type: String, default: "" },
     enrolledCount: { type: Number, default: 0 },
     bannerImage: { type: String, default: "" },
     interestCount: { type: Number, default: 0 },

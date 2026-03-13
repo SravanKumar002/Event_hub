@@ -7,11 +7,33 @@ const router = express.Router();
 // POST /api/feedback — public, submit feedback
 router.post("/", async (req, res) => {
   try {
-    const { rating, ratingLabel, comment } = req.body;
+    const {
+      rating,
+      ratingLabel,
+      comment,
+      page,
+      question,
+      scaleMax,
+      primaryQuestion,
+      primaryAnswer,
+      secondaryQuestion,
+      secondaryAnswer,
+    } = req.body;
     if (!rating || rating < 1 || rating > 5) {
       return res.status(400).json({ message: "Rating (1-5) is required" });
     }
-    const feedback = new Feedback({ rating, ratingLabel, comment });
+    const feedback = new Feedback({
+      rating,
+      ratingLabel,
+      comment,
+      page,
+      question,
+      scaleMax,
+      primaryQuestion,
+      primaryAnswer,
+      secondaryQuestion,
+      secondaryAnswer,
+    });
     await feedback.save();
     res.status(201).json(feedback);
   } catch (error) {

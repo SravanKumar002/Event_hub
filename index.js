@@ -21,13 +21,15 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware – handle CORS for all origins (Vercel + any client)
-app.use(cors({
-  origin: true,
-  credentials: true,
-  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-}));
-app.options("*", cors());   // explicitly handle every OPTIONS pre-flight
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+app.options("*", cors()); // explicitly handle every OPTIONS pre-flight
 app.use(express.json());
 
 // Routes
