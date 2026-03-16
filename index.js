@@ -6,6 +6,8 @@ import adminRoutes from "./routes/admin.js";
 import eventRoutes from "./routes/events.js";
 import announcementRoutes from "./routes/announcements.js";
 import feedbackRoutes from "./routes/feedback.js";
+import notInterestedRoutes from "./routes/notInterested.js";
+import bannerRoutes from "./routes/banner.js";
 import Admin from "./models/Admin.js";
 import Event from "./models/Event.js";
 
@@ -37,6 +39,8 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/feedback", feedbackRoutes);
+app.use("/api/not-interested", notInterestedRoutes);
+app.use("/api/banner", bannerRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

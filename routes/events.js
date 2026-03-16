@@ -4,11 +4,55 @@ import { authMiddleware } from "../middleware/auth.js";
 
 const router = express.Router();
 
+const toCategorySlug = (value = "") =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+
+const categorySlugAliases = {
+  assignments: "assessments",
+  "guidence-meets": "guidance-meets",
+};
+
+const normalizeCategorySlug = (value = "") => {
+  const slug = toCategorySlug(value);
+  if (slug.includes("challenge")) return "challenges";
+  if (slug.includes("assessment") || slug.includes("assignment")) {
+    return "assessments";
+  }
+  return categorySlugAliases[slug] ?? slug;
+};
+
+const filterByCategorySlug = (events, categorySlug) => {
+  const normalized = normalizeCategorySlug(categorySlug);
+  if (!normalized) return events;
+  return events.filter(
+    (event) => normalizeCategorySlug(event.category) === normalized,
+  );
+};
+
 // GET /api/events — public, get all events
 router.get("/", async (req, res) => {
   try {
     const events = await Event.find().sort({ date: -1 });
+    const { category } = req.query;
+    if (typeof category === "string" && category.trim() !== "") {
+      return res.json(filterByCategorySlug(events, category));
+    }
     res.json(events);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
+
+// GET /api/events/category/:categorySlug — public, get events by category slug
+router.get("/category/:categorySlug", async (req, res) => {
+  try {
+    const events = await Event.find().sort({ date: -1 });
+    const filtered = filterByCategorySlug(events, req.params.categorySlug);
+    res.json(filtered);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
