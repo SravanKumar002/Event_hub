@@ -27,18 +27,23 @@ router.get("/fallback-image", async (req, res) => {
 });
 
 // PUT /api/banner — admin or team, upsert the banner
-router.put("/", authMiddleware, requireRole("team", "admin"), async (req, res) => {
-  try {
-    const { text, emoji, isActive } = req.body;
-    const banner = await BannerMessage.findOneAndUpdate(
-      {},
-      { text, emoji: emoji || "📢", isActive: !!isActive },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    );
-    res.json(banner);
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
+router.put(
+  "/",
+  authMiddleware,
+  requireRole("team", "admin"),
+  async (req, res) => {
+    try {
+      const { text, emoji, isActive } = req.body;
+      const banner = await BannerMessage.findOneAndUpdate(
+        {},
+        { text, emoji: emoji || "📢", isActive: !!isActive },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+      res.json(banner);
+    } catch (error) {
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
+  },
+);
 
 export default router;

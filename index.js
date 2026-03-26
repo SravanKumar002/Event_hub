@@ -65,35 +65,42 @@ if (!MONGO_URL) {
       console.log("✅ Connected to MongoDB");
 
       // Ensure default admin and team users for role-based access.
-      let adminUser = await User.findOne({ username: "admin" });
+      // Admin user: academy_admin / Academysystemadmin@2025
+      let adminUser = await User.findOne({ username: "academy_admin" });
       if (!adminUser) {
         adminUser = await User.create({
-          username: "admin",
-          password: "Admin@2026",
+          username: "academy_admin",
+          password: "Academysystemadmin@2025",
           role: "admin",
         });
-        console.log("🔑 Default admin created (admin / Admin@2026)");
+        console.log(
+          "🔑 Default admin created (academy_admin / Academysystemadmin@2025)",
+        );
       } else {
-        const hadOldPassword = await adminUser.comparePassword("Admin123");
+        // Always enforce admin role and a known password so deployments stay in sync
         adminUser.role = "admin";
-        if (hadOldPassword) {
-          adminUser.password = "Admin@2026";
-          console.log("🔐 Admin password rotated to Admin@2026");
-        }
+        adminUser.password = "Academysystemadmin@2025";
         await adminUser.save();
+        console.log("🔐 Admin password reset to Academysystemadmin@2025");
       }
 
-      const teamUser = await User.findOne({ username: "team" });
+      // Team user: academy_team / AcademyTeamevents@2026
+      let teamUser = await User.findOne({ username: "academy_team" });
       if (!teamUser) {
-        await User.create({
-          username: "team",
-          password: "Team@2026",
+        teamUser = await User.create({
+          username: "academy_team",
+          password: "AcademyTeamevents@2026",
           role: "team",
         });
-        console.log("👥 Default team user created (team / Team@2026)");
-      } else if (teamUser.role !== "team") {
+        console.log(
+          "👥 Default team user created (academy_team / AcademyTeamevents@2026)",
+        );
+      } else {
+        // Always enforce team role and a known password
         teamUser.role = "team";
+        teamUser.password = "AcademyTeamevents@2026";
         await teamUser.save();
+        console.log("👥 Team password reset to AcademyTeamevents@2026");
       }
 
       // Seed default events if none exist

@@ -69,40 +69,57 @@ router.get("/slider", async (req, res) => {
 });
 
 // POST /api/events — admin or team, create event
-router.post("/", authMiddleware, requireRole("team", "admin"), async (req, res) => {
-  try {
-    const event = new Event(req.body);
-    await event.save();
-    res.status(201).json(event);
-  } catch (error) {
-    res.status(400).json({ message: "Validation error", error: error.message });
-  }
-});
+router.post(
+  "/",
+  authMiddleware,
+  requireRole("team", "admin"),
+  async (req, res) => {
+    try {
+      const event = new Event(req.body);
+      await event.save();
+      res.status(201).json(event);
+    } catch (error) {
+      res
+        .status(400)
+        .json({ message: "Validation error", error: error.message });
+    }
+  },
+);
 
 // PUT /api/events/:id — admin or team, update event
-router.put("/:id", authMiddleware, requireRole("team", "admin"), async (req, res) => {
-  try {
-    const event = await Event.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
-    if (!event) return res.status(404).json({ message: "Event not found" });
-    res.json(event);
-  } catch (error) {
-    res.status(400).json({ message: "Update error", error: error.message });
-  }
-});
+router.put(
+  "/:id",
+  authMiddleware,
+  requireRole("team", "admin"),
+  async (req, res) => {
+    try {
+      const event = await Event.findByIdAndUpdate(req.params.id, req.body, {
+        new: true,
+        runValidators: true,
+      });
+      if (!event) return res.status(404).json({ message: "Event not found" });
+      res.json(event);
+    } catch (error) {
+      res.status(400).json({ message: "Update error", error: error.message });
+    }
+  },
+);
 
 // DELETE /api/events/:id — admin or team
-router.delete("/:id", authMiddleware, requireRole("team", "admin"), async (req, res) => {
-  try {
-    const event = await Event.findByIdAndDelete(req.params.id);
-    if (!event) return res.status(404).json({ message: "Event not found" });
-    res.json({ message: "Event deleted" });
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
+router.delete(
+  "/:id",
+  authMiddleware,
+  requireRole("team", "admin"),
+  async (req, res) => {
+    try {
+      const event = await Event.findByIdAndDelete(req.params.id);
+      if (!event) return res.status(404).json({ message: "Event not found" });
+      res.json({ message: "Event deleted" });
+    } catch (error) {
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
+  },
+);
 
 // POST /api/events/:id/interest — public, increment interest count
 router.post("/:id/interest", async (req, res) => {
