@@ -1,0 +1,11 @@
+
+> academy-beacon-server@1.0.0 dev
+> node --watch index.js
+
+🚀 Server running on port 5002
+✅ Connected to MongoDB
+Restarting 'index.js'
+🚀 Server running on port 5002
+Restarting 'index.js'
+🚀 Server running on port 5002
+✅ Connected to MongoDB

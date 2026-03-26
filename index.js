@@ -2,13 +2,13 @@ import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
-import adminRoutes from "./routes/admin.js";
+import authRoutes from "./routes/auth.js";
 import eventRoutes from "./routes/events.js";
 import announcementRoutes from "./routes/announcements.js";
 import feedbackRoutes from "./routes/feedback.js";
 import notInterestedRoutes from "./routes/notInterested.js";
 import bannerRoutes from "./routes/banner.js";
-import Admin from "./models/Admin.js";
+import User from "./models/User.js";
 import Event from "./models/Event.js";
 
 import { fileURLToPath } from "url";
@@ -36,7 +36,7 @@ app.options("*", cors()); // explicitly handle every OPTIONS pre-flight
 app.use(express.json());
 
 // Routes
-app.use("/api/admin", adminRoutes);
+app.use("/api/auth", authRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/feedback", feedbackRoutes);
@@ -64,11 +64,36 @@ if (!MONGO_URL) {
     .then(async () => {
       console.log("✅ Connected to MongoDB");
 
-      // Seed default admin if none exists
-      const adminCount = await Admin.countDocuments();
-      if (adminCount === 0) {
-        await Admin.create({ username: "admin", password: "admin123" });
-        console.log("🔑 Default admin created (admin / admin123)");
+      // Ensure default admin and team users for role-based access.
+      let adminUser = await User.findOne({ username: "admin" });
+      if (!adminUser) {
+        adminUser = await User.create({
+          username: "admin",
+          password: "Admin@2026",
+          role: "admin",
+        });
+        console.log("🔑 Default admin created (admin / Admin@2026)");
+      } else {
+        const hadOldPassword = await adminUser.comparePassword("Admin123");
+        adminUser.role = "admin";
+        if (hadOldPassword) {
+          adminUser.password = "Admin@2026";
+          console.log("🔐 Admin password rotated to Admin@2026");
+        }
+        await adminUser.save();
+      }
+
+      const teamUser = await User.findOne({ username: "team" });
+      if (!teamUser) {
+        await User.create({
+          username: "team",
+          password: "Team@2026",
+          role: "team",
+        });
+        console.log("👥 Default team user created (team / Team@2026)");
+      } else if (teamUser.role !== "team") {
+        teamUser.role = "team";
+        await teamUser.save();
       }
 
       // Seed default events if none exist

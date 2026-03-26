@@ -1,6 +1,6 @@
 import express from "express";
 import BannerMessage from "../models/BannerMessage.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -17,8 +17,17 @@ router.get("/", async (req, res) => {
   }
 });
 
-// PUT /api/banner — admin only, upsert the banner
-router.put("/", authMiddleware, async (req, res) => {
+// GET /api/banner/fallback-image — public, returns fallback slider image
+router.get("/fallback-image", async (req, res) => {
+  try {
+    res.json({ fallbackSliderImage: "" });
+  } catch (error) {
+    res.status(500).json({ fallbackSliderImage: "" });
+  }
+});
+
+// PUT /api/banner — admin or team, upsert the banner
+router.put("/", authMiddleware, requireRole("team", "admin"), async (req, res) => {
   try {
     const { text, emoji, isActive } = req.body;
     const banner = await BannerMessage.findOneAndUpdate(

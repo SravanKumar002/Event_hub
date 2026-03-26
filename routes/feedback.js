@@ -1,6 +1,6 @@
 import express from "express";
 import Feedback from "../models/Feedback.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -44,7 +44,7 @@ router.post("/", async (req, res) => {
 });
 
 // GET /api/feedback — admin only, get all feedback
-router.get("/", authMiddleware, async (req, res) => {
+router.get("/", authMiddleware, requireRole("admin"), async (req, res) => {
   try {
     const feedbacks = await Feedback.find().sort({ createdAt: -1 });
     res.json(feedbacks);
@@ -54,7 +54,7 @@ router.get("/", authMiddleware, async (req, res) => {
 });
 
 // GET /api/feedback/stats — admin only, get feedback statistics
-router.get("/stats", authMiddleware, async (req, res) => {
+router.get("/stats", authMiddleware, requireRole("admin"), async (req, res) => {
   try {
     const feedbacks = await Feedback.find();
     const total = feedbacks.length;
@@ -73,13 +73,18 @@ router.get("/stats", authMiddleware, async (req, res) => {
 });
 
 // DELETE /api/feedback/:id — admin only
-router.delete("/:id", authMiddleware, async (req, res) => {
-  try {
-    await Feedback.findByIdAndDelete(req.params.id);
-    res.json({ message: "Feedback deleted" });
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
+router.delete(
+  "/:id",
+  authMiddleware,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      await Feedback.findByIdAndDelete(req.params.id);
+      res.json({ message: "Feedback deleted" });
+    } catch (error) {
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
+  },
+);
 
 export default router;

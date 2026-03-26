@@ -1,6 +1,6 @@
 import express from "express";
 import Announcement from "../models/Announcement.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -17,7 +17,7 @@ router.get("/", async (req, res) => {
 });
 
 // POST /api/announcements — admin only
-router.post("/", authMiddleware, async (req, res) => {
+router.post("/", authMiddleware, requireRole("team"), async (req, res) => {
   try {
     const announcement = new Announcement(req.body);
     await announcement.save();
@@ -28,7 +28,7 @@ router.post("/", authMiddleware, async (req, res) => {
 });
 
 // PUT /api/announcements/:id — admin only
-router.put("/:id", authMiddleware, async (req, res) => {
+router.put("/:id", authMiddleware, requireRole("team"), async (req, res) => {
   try {
     const announcement = await Announcement.findByIdAndUpdate(
       req.params.id,
@@ -44,7 +44,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
 });
 
 // DELETE /api/announcements/:id — admin only
-router.delete("/:id", authMiddleware, async (req, res) => {
+router.delete("/:id", authMiddleware, requireRole("team"), async (req, res) => {
   try {
     const announcement = await Announcement.findByIdAndDelete(req.params.id);
     if (!announcement)

@@ -1,6 +1,6 @@
 import express from "express";
 import Event from "../models/Event.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -68,8 +68,8 @@ router.get("/slider", async (req, res) => {
   }
 });
 
-// POST /api/events — admin only, create event
-router.post("/", authMiddleware, async (req, res) => {
+// POST /api/events — admin or team, create event
+router.post("/", authMiddleware, requireRole("team", "admin"), async (req, res) => {
   try {
     const event = new Event(req.body);
     await event.save();
@@ -79,8 +79,8 @@ router.post("/", authMiddleware, async (req, res) => {
   }
 });
 
-// PUT /api/events/:id — admin only, update event
-router.put("/:id", authMiddleware, async (req, res) => {
+// PUT /api/events/:id — admin or team, update event
+router.put("/:id", authMiddleware, requireRole("team", "admin"), async (req, res) => {
   try {
     const event = await Event.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
@@ -93,8 +93,8 @@ router.put("/:id", authMiddleware, async (req, res) => {
   }
 });
 
-// DELETE /api/events/:id — admin only
-router.delete("/:id", authMiddleware, async (req, res) => {
+// DELETE /api/events/:id — admin or team
+router.delete("/:id", authMiddleware, requireRole("team", "admin"), async (req, res) => {
   try {
     const event = await Event.findByIdAndDelete(req.params.id);
     if (!event) return res.status(404).json({ message: "Event not found" });

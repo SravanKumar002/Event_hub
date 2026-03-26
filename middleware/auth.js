@@ -7,9 +7,23 @@ export const authMiddleware = (req, res, next) => {
   }
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.admin = decoded;
+    req.user = decoded;
     next();
   } catch {
     return res.status(401).json({ message: "Invalid token" });
   }
 };
+
+export const requireRole =
+  (...allowedRoles) =>
+  (req, res, next) => {
+    if (!req.user?.role) {
+      return res.status(403).json({ message: "Role missing in token" });
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
+    }
+
+    next();
+  };

@@ -1,6 +1,6 @@
 import express from "express";
 import NotInterested from "../models/NotInterested.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -43,7 +43,7 @@ router.post("/", async (req, res) => {
 });
 
 // GET /api/not-interested — admin only
-router.get("/", authMiddleware, async (req, res) => {
+router.get("/", authMiddleware, requireRole("admin"), async (req, res) => {
   try {
     const items = await NotInterested.find().sort({ createdAt: -1 });
     res.json(items);
@@ -53,13 +53,18 @@ router.get("/", authMiddleware, async (req, res) => {
 });
 
 // DELETE /api/not-interested/:id — admin only
-router.delete("/:id", authMiddleware, async (req, res) => {
-  try {
-    await NotInterested.findByIdAndDelete(req.params.id);
-    res.json({ message: "Not interested entry deleted" });
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
+router.delete(
+  "/:id",
+  authMiddleware,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      await NotInterested.findByIdAndDelete(req.params.id);
+      res.json({ message: "Not interested entry deleted" });
+    } catch (error) {
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
+  },
+);
 
 export default router;
