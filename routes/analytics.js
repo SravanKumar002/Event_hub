@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import TrackEvent from "../models/TrackEvent.js";
 import TrackSession from "../models/TrackSession.js";
 import { activeSocketSessions } from "../index.js";
+import { authMiddleware, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -46,6 +47,9 @@ router.post("/track", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+// Protect analytics read/write management routes for admin only.
+router.use(authMiddleware, requireRole("admin"));
 
 // GET: Overview statistics
 router.get("/overview", async (req, res) => {
@@ -120,6 +124,25 @@ router.get("/users", async (req, res) => {
   }
 });
 
+// DELETE: Remove tracked user analytics data
+router.delete("/users/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const [eventsResult, sessionsResult] = await Promise.all([
+      TrackEvent.deleteMany({ userId }),
+      TrackSession.deleteMany({ userId })
+    ]);
+    res.json({
+      success: true,
+      deletedEvents: eventsResult.deletedCount || 0,
+      deletedSessions: sessionsResult.deletedCount || 0
+    });
+  } catch (error) {
+    console.error("Error deleting user analytics:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // GET: Events & pages
 router.get("/events", async (req, res) => {
   try {
@@ -164,6 +187,163 @@ router.get("/events", async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching events:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// DELETE: Remove a single tracked event entry by id
+router.delete("/events/:eventId", async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(eventId)) {
+      return res.status(400).json({ error: "Invalid event id" });
+    }
+
+    const deleted = await TrackEvent.findByIdAndDelete(eventId);
+    if (!deleted) return res.status(404).json({ error: "Event not found" });
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting analytics event:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET: V2 Metrics
+router.get("/v2-metrics", async (req, res) => {
+  try {
+    const period = req.query.period === "week" ? "week" : "day";
+    const now = new Date();
+    const periodStart = new Date(now);
+    periodStart.setHours(0, 0, 0, 0);
+    if (period === "week") {
+      periodStart.setDate(periodStart.getDate() - 6);
+    }
+
+    const allTimeUsers = await TrackSession.distinct("userId");
+    const allTimeUsersCount = allTimeUsers.length;
+
+    const activeUsersInPeriod = await TrackEvent.distinct("userId", {
+      timestamp: { $gte: periodStart }
+    });
+    const dauUsers = await TrackEvent.distinct("userId", {
+      timestamp: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) }
+    });
+    const wauStart = new Date();
+    wauStart.setDate(wauStart.getDate() - 6);
+    wauStart.setHours(0, 0, 0, 0);
+    const wauUsers = await TrackEvent.distinct("userId", {
+      timestamp: { $gte: wauStart }
+    });
+
+    const baseMatch = { timestamp: { $gte: periodStart } };
+    const withEvent = (eventName) => ({ ...baseMatch, eventName });
+
+    const [
+      calendarViewers,
+      eventViews,
+      totalClicks,
+      calendarDurations,
+      addToCalendarClicks,
+      eventRegistrationsViaCalendar,
+      scrollEvents,
+      filterEvents
+    ] = await Promise.all([
+      TrackEvent.distinct("userId", { ...baseMatch, page: "/calendar" }),
+      TrackEvent.countDocuments(withEvent("event_viewed")),
+      TrackEvent.countDocuments(withEvent("click")),
+      TrackEvent.find({ ...withEvent("time_spent_calendar"), page: "/calendar" }, "metadata"),
+      TrackEvent.countDocuments(withEvent("add_to_calendar")),
+      TrackEvent.countDocuments({
+        ...withEvent("add_to_calendar"),
+        "metadata.source": "calendar"
+      }),
+      TrackEvent.find({ ...withEvent("scroll_depth"), page: "/calendar" }, "metadata"),
+      TrackEvent.find({ ...withEvent("calendar_filter_used"), page: "/calendar" }, "metadata")
+    ]);
+
+    const activeUsersCount = activeUsersInPeriod.length;
+    const percentCalendarVisit = activeUsersCount > 0
+      ? (calendarViewers.length / activeUsersCount) * 100
+      : 0;
+    const viewsPerUser = activeUsersCount > 0 ? eventViews / activeUsersCount : 0;
+    const clicksPerEvent = eventViews > 0 ? totalClicks / eventViews : 0;
+
+    const totalTimeCalendar = calendarDurations.reduce(
+      (sum, eventDoc) => sum + Number(eventDoc.metadata?.durationSeconds || 0),
+      0
+    );
+    const avgCalendarTime = calendarDurations.length > 0
+      ? Math.round(totalTimeCalendar / calendarDurations.length)
+      : 0;
+
+    const avgScrollDepth = scrollEvents.length > 0
+      ? Math.round(
+          scrollEvents.reduce((sum, eventDoc) => {
+            const raw = String(eventDoc.metadata?.depth || "0").replace("%", "");
+            return sum + Number.parseInt(raw || "0", 10);
+          }, 0) / scrollEvents.length
+        )
+      : 0;
+
+    const filterUsageByType = filterEvents.reduce((acc, eventDoc) => {
+      const filterName = eventDoc.metadata?.filter || "unknown";
+      acc[filterName] = (acc[filterName] || 0) + 1;
+      return acc;
+    }, {});
+    const filtersUsedCount = filterEvents.length;
+
+    const percentRegistrationsFromCalendar = addToCalendarClicks > 0
+      ? (eventRegistrationsViaCalendar / addToCalendarClicks) * 100
+      : 0;
+
+    const trendFormat = period === "week" ? "%G-W%V" : "%Y-%m-%d";
+    const trendLimit = period === "week" ? 12 : 14;
+    const trend = await TrackEvent.aggregate([
+      { $match: baseMatch },
+      {
+        $group: {
+          _id: { $dateToString: { format: trendFormat, date: "$timestamp" } },
+          activeUsersSet: { $addToSet: "$userId" },
+          pageViews: {
+            $sum: { $cond: [{ $eq: ["$eventName", "page_view"] }, 1, 0] }
+          },
+          calendarViews: {
+            $sum: { $cond: [{ $eq: ["$eventName", "calendar_viewed"] }, 1, 0] }
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          activeUsers: { $size: "$activeUsersSet" },
+          pageViews: 1,
+          calendarViews: 1
+        }
+      },
+      { $sort: { _id: 1 } },
+      { $limit: trendLimit }
+    ]);
+
+    res.json({
+      period,
+      activeUsers: activeUsersCount,
+      dau: dauUsers.length,
+      wau: wauUsers.length,
+      portalUsers: allTimeUsersCount,
+      percentCalendarVisit: Number(percentCalendarVisit.toFixed(1)),
+      eventsViewedPerUser: Number(viewsPerUser.toFixed(2)),
+      clicksPerEvent: Number(clicksPerEvent.toFixed(2)),
+      avgCalendarTimeSeconds: avgCalendarTime,
+      avgScrollDepthPercent: avgScrollDepth,
+      filtersUsedCount,
+      filterUsageByType,
+      eventRegistrationsViaCalendar,
+      percentRegistrationsFromCalendar: Number(percentRegistrationsFromCalendar.toFixed(1)),
+      addToCalendarClicks,
+      trend
+    });
+  } catch (err) {
+    console.error("v2 metrics error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

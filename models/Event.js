@@ -7,6 +7,8 @@ const eventSchema = new mongoose.Schema(
     date: { type: String, required: true },
     time: { type: String, required: true },
     description: { type: String, required: true },
+    location: { type: String, default: "" },
+    tags: { type: [String], default: [] },
     fullDescription: { type: String, default: "" },
     eligibility: { type: String, default: "" },
     joinLink: { type: String, default: "#" },

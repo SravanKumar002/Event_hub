@@ -12,4 +12,7 @@ const trackEventSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Keep raw analytics data bounded for production performance.
+trackEventSchema.index({ timestamp: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 });
+
 export default mongoose.model("TrackEvent", trackEventSchema);
