@@ -119,6 +119,22 @@ if (!MONGO_URL) {
         console.log("🔐 Admin password reset to Academysystemadmin@2025");
       }
 
+      // Admin user: admin / admin123
+      let customAdmin = await User.findOne({ username: "admin" });
+      if (!customAdmin) {
+        customAdmin = await User.create({
+          username: "admin",
+          password: "admin123",
+          role: "admin",
+        });
+        console.log("🔑 Default admin created (admin / admin123)");
+      } else {
+        customAdmin.role = "admin";
+        customAdmin.password = "admin123";
+        await customAdmin.save();
+        console.log("🔐 Admin password reset to admin123");
+      }
+
       // Team user: academy_team / AcademyTeamevents@2026
       let teamUser = await User.findOne({ username: "academy_team" });
       if (!teamUser) {
