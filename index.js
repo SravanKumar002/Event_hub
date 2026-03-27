@@ -8,11 +8,13 @@ import announcementRoutes from "./routes/announcements.js";
 import feedbackRoutes from "./routes/feedback.js";
 import notInterestedRoutes from "./routes/notInterested.js";
 import bannerRoutes from "./routes/banner.js";
+import analyticsRoutes from "./routes/analytics.js";
 import User from "./models/User.js";
 import Event from "./models/Event.js";
-
-import { fileURLToPath } from "url";
+import { createServer } from "http";
+import { Server } from "socket.io";
 import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,6 +24,38 @@ dotenv.config({ path: join(__dirname, ".env") });
 const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGO_URL = process.env.MONGODB_URI || process.env.MONGODB_URL;
+
+const httpServer = createServer(app);
+
+// Keep track of active sockets
+export const activeSocketSessions = new Map();
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+io.on("connection", (socket) => {
+  socket.on("register_session", ({ sessionId, page }) => {
+    activeSocketSessions.set(socket.id, { sessionId, page });
+    io.emit("active_users", activeSocketSessions.size);
+  });
+
+  socket.on("page_view", ({ sessionId, page }) => {
+    const session = activeSocketSessions.get(socket.id);
+    if (session) {
+      session.page = page;
+      activeSocketSessions.set(socket.id, session);
+    }
+  });
+
+  socket.on("disconnect", () => {
+    activeSocketSessions.delete(socket.id);
+    io.emit("active_users", activeSocketSessions.size);
+  });
+});
 
 // Middleware – handle CORS for all origins (Vercel + any client)
 app.use(
@@ -42,6 +76,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/not-interested", notInterestedRoutes);
 app.use("/api/banner", bannerRoutes);
+app.use("/api/analytics", analyticsRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {
@@ -49,7 +84,7 @@ app.get("/api/health", (req, res) => {
 });
 
 // Start server immediately so Render health-check passes quickly
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
 
