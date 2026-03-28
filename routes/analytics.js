@@ -98,8 +98,11 @@ router.get("/users", async (req, res) => {
       return res.json({ sessions, events });
     }
 
-    // Aggregate users
-    const users = await TrackSession.aggregate([
+    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
+    const skip = (page - 1) * limit;
+
+    const basePipeline = [
       {
         $group: {
           _id: "$userId",
@@ -108,16 +111,27 @@ router.get("/users", async (req, res) => {
           lastActive: { $max: "$endTime" }
         }
       },
-      { $sort: { lastActive: -1 } },
-      { $limit: 100 }
+      { $sort: { lastActive: -1 } }
+    ];
+
+    const [countRows, users] = await Promise.all([
+      TrackSession.aggregate([...basePipeline, { $count: "total" }]),
+      TrackSession.aggregate([...basePipeline, { $skip: skip }, { $limit: limit }]),
     ]);
-    
-    res.json(users.map(u => ({
+
+    const total = countRows?.[0]?.total || 0;
+
+    res.json({
+      page,
+      limit,
+      total,
+      items: users.map((u) => ({
       userId: u._id,
       sessionsCount: u.totalSessions,
       timeSpent: u.totalTimeSpent,
       lastActive: u.lastActive || new Date()
-    })));
+      })),
+    });
   } catch (error) {
     console.error("Error fetching users:", error);
     res.status(500).json({ error: "Server error" });
