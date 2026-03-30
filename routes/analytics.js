@@ -51,6 +51,39 @@ router.post("/track", async (req, res) => {
 // Protect analytics read/write management routes for admin only.
 router.use(authMiddleware, requireRole("admin"));
 
+const ANALYTICS_TZ = process.env.ANALYTICS_TIMEZONE || "Asia/Kolkata";
+
+function todayYmdInTz(tz) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function ymdMinusDays(ymd, days) {
+  const [y, m, d] = ymd.split("-").map((x) => parseInt(x, 10));
+  if (!y || !m || !d) return ymd;
+  const u = Date.UTC(y, m - 1, d);
+  const t = new Date(u - days * 86400000);
+  const yy = t.getUTCFullYear();
+  const mm = String(t.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(t.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+function parseAnchorYmd(queryDate, tz) {
+  if (typeof queryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(queryDate)) {
+    return queryDate;
+  }
+  return todayYmdInTz(tz);
+}
+
+function tsYmdExpr(tz) {
+  return { $dateToString: { format: "%Y-%m-%d", date: "$timestamp", timezone: tz } };
+}
+
 // GET: Overview statistics
 router.get("/overview", async (req, res) => {
   try {
@@ -72,6 +105,38 @@ router.get("/overview", async (req, res) => {
     ]);
     
     const bounceRate = totalSessions > 0 ? (singleSessionEvents.length / totalSessions) * 100 : 0;
+
+    const fourteenAgo = new Date();
+    fourteenAgo.setDate(fourteenAgo.getDate() - 13);
+    fourteenAgo.setHours(0, 0, 0, 0);
+
+    const [dailyActivity, topEventTypes, topPages] = await Promise.all([
+      TrackEvent.aggregate([
+        { $match: { timestamp: { $gte: fourteenAgo } } },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: "%Y-%m-%d", date: "$timestamp", timezone: ANALYTICS_TZ },
+            },
+            total: { $sum: 1 },
+            pageViews: { $sum: { $cond: [{ $eq: ["$eventName", "page_view"] }, 1, 0] } },
+            clicks: { $sum: { $cond: [{ $eq: ["$eventName", "click"] }, 1, 0] } },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+      TrackEvent.aggregate([
+        { $group: { _id: "$eventName", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 15 },
+      ]),
+      TrackEvent.aggregate([
+        { $match: { eventName: "page_view" } },
+        { $group: { _id: "$page", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 12 },
+      ]),
+    ]);
     
     res.json({
       totalUsers: totalUsers.length,
@@ -79,10 +144,70 @@ router.get("/overview", async (req, res) => {
       totalPageViews,
       avgTimeSpent: parseFloat(avgTimeSpent.toFixed(2)),
       bounceRate: parseFloat(bounceRate.toFixed(2)),
-      realtimeActive: activeSocketSessions.size
+      realtimeActive: activeSocketSessions.size,
+      dailyActivity,
+      topEventTypes,
+      topPages,
+      analyticsTimezone: ANALYTICS_TZ,
     });
   } catch (error) {
     console.error("Error fetching overview:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET: Activity heatmap (day × hour) for admin Analysis tab
+router.get("/activity-heatmap", async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(String(req.query.days || "30"), 10) || 30, 7), 90);
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    since.setHours(0, 0, 0, 0);
+
+    const tzGroup = {
+      dow: { $isoDayOfWeek: { date: "$timestamp", timezone: ANALYTICS_TZ } },
+      hour: { $hour: { date: "$timestamp", timezone: ANALYTICS_TZ } },
+    };
+    const utcGroup = {
+      dow: { $isoDayOfWeek: "$timestamp" },
+      hour: { $hour: "$timestamp" },
+    };
+
+    let rows;
+    try {
+      rows = await TrackEvent.aggregate([
+        { $match: { timestamp: { $gte: since } } },
+        { $group: { _id: tzGroup, count: { $sum: 1 } } },
+      ]);
+    } catch (aggErr) {
+      console.warn("activity-heatmap TZ aggregation failed, using UTC:", aggErr?.message);
+      rows = await TrackEvent.aggregate([
+        { $match: { timestamp: { $gte: since } } },
+        { $group: { _id: utcGroup, count: { $sum: 1 } } },
+      ]);
+    }
+
+    const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const matrix = Array.from({ length: 7 }, () => Array(24).fill(0));
+    let max = 0;
+    for (const r of rows) {
+      const d = (r._id?.dow ?? 1) - 1;
+      const h = r._id?.hour ?? 0;
+      if (d >= 0 && d < 7 && h >= 0 && h < 24) {
+        matrix[d][h] += r.count;
+        if (matrix[d][h] > max) max = matrix[d][h];
+      }
+    }
+
+    res.json({
+      days,
+      matrix,
+      dayLabels,
+      max,
+      timezone: ANALYTICS_TZ,
+    });
+  } catch (error) {
+    console.error("Error fetching activity heatmap:", error);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -226,31 +351,29 @@ router.delete("/events/:eventId", async (req, res) => {
 router.get("/v2-metrics", async (req, res) => {
   try {
     const period = req.query.period === "week" ? "week" : "day";
-    const now = new Date();
-    const periodStart = new Date(now);
-    periodStart.setHours(0, 0, 0, 0);
-    if (period === "week") {
-      periodStart.setDate(periodStart.getDate() - 6);
-    }
+    const anchorYmd = parseAnchorYmd(req.query.date, ANALYTICS_TZ);
+    const tsYmd = tsYmdExpr(ANALYTICS_TZ);
+
+    const singleDayMatch = { $expr: { $eq: [tsYmd, anchorYmd] } };
+    const weekStartYmd = ymdMinusDays(anchorYmd, 6);
+    const rollingWeekMatch = {
+      $expr: {
+        $and: [
+          { $gte: [tsYmd, weekStartYmd] },
+          { $lte: [tsYmd, anchorYmd] },
+        ],
+      },
+    };
+
+    const baseMatch = period === "week" ? rollingWeekMatch : singleDayMatch;
+    const withEvent = (eventName) => ({ $and: [baseMatch, { eventName }] });
 
     const allTimeUsers = await TrackSession.distinct("userId");
     const allTimeUsersCount = allTimeUsers.length;
 
-    const activeUsersInPeriod = await TrackEvent.distinct("userId", {
-      timestamp: { $gte: periodStart }
-    });
-    const dauUsers = await TrackEvent.distinct("userId", {
-      timestamp: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) }
-    });
-    const wauStart = new Date();
-    wauStart.setDate(wauStart.getDate() - 6);
-    wauStart.setHours(0, 0, 0, 0);
-    const wauUsers = await TrackEvent.distinct("userId", {
-      timestamp: { $gte: wauStart }
-    });
-
-    const baseMatch = { timestamp: { $gte: periodStart } };
-    const withEvent = (eventName) => ({ ...baseMatch, eventName });
+    const activeUsersInPeriod = await TrackEvent.distinct("userId", baseMatch);
+    const dauUsers = await TrackEvent.distinct("userId", singleDayMatch);
+    const wauUsers = await TrackEvent.distinct("userId", rollingWeekMatch);
 
     const [
       calendarViewers,
@@ -312,34 +435,44 @@ router.get("/v2-metrics", async (req, res) => {
 
     const trendFormat = period === "week" ? "%G-W%V" : "%Y-%m-%d";
     const trendLimit = period === "week" ? 12 : 14;
+    const trendStartYmd =
+      period === "week" ? ymdMinusDays(anchorYmd, 12 * 7 - 1) : ymdMinusDays(anchorYmd, 13);
+    const trendWindowMatch = {
+      $expr: {
+        $and: [{ $gte: [tsYmd, trendStartYmd] }, { $lte: [tsYmd, anchorYmd] }],
+      },
+    };
+
     const trend = await TrackEvent.aggregate([
-      { $match: baseMatch },
+      { $match: trendWindowMatch },
       {
         $group: {
-          _id: { $dateToString: { format: trendFormat, date: "$timestamp" } },
+          _id: { $dateToString: { format: trendFormat, date: "$timestamp", timezone: ANALYTICS_TZ } },
           activeUsersSet: { $addToSet: "$userId" },
           pageViews: {
-            $sum: { $cond: [{ $eq: ["$eventName", "page_view"] }, 1, 0] }
+            $sum: { $cond: [{ $eq: ["$eventName", "page_view"] }, 1, 0] },
           },
           calendarViews: {
-            $sum: { $cond: [{ $eq: ["$eventName", "calendar_viewed"] }, 1, 0] }
-          }
-        }
+            $sum: { $cond: [{ $eq: ["$eventName", "calendar_viewed"] }, 1, 0] },
+          },
+        },
       },
       {
         $project: {
           _id: 1,
           activeUsers: { $size: "$activeUsersSet" },
           pageViews: 1,
-          calendarViews: 1
-        }
+          calendarViews: 1,
+        },
       },
       { $sort: { _id: 1 } },
-      { $limit: trendLimit }
+      { $limit: trendLimit },
     ]);
 
     res.json({
       period,
+      anchorDate: anchorYmd,
+      analyticsTimezone: ANALYTICS_TZ,
       activeUsers: activeUsersCount,
       dau: dauUsers.length,
       wau: wauUsers.length,
