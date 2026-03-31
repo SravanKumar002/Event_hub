@@ -156,9 +156,105 @@ router.get("/overview", async (req, res) => {
   }
 });
 
-// GET: Activity heatmap (day × hour) for admin Analysis tab
+// GET: Activity heatmap for admin Analysis tab
+// - default: weekday × hour (Mon..Sun × 0..23) for last N days (via ?days=30)
+// - view=monthDays: day-of-month × hour (1..28/29/30/31 × 0..23) for current month
 router.get("/activity-heatmap", async (req, res) => {
   try {
+    const view = String(req.query.view || "weekday");
+
+    // ---- Month day-of-month heatmap ----
+    if (view === "monthDays") {
+      const now = new Date();
+      // Determine current month/year in the analytics timezone
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: ANALYTICS_TZ,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(now);
+
+      const getPart = (type) => parts.find((p) => p.type === type)?.value;
+      const year = parseInt(getPart("year"), 10);
+      const monthNum = parseInt(getPart("month"), 10); // 1-12
+
+      const pad2 = (n) => String(n).padStart(2, "0");
+      const daysInMonth = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
+
+      const monthStartYmd = `${year}-${pad2(monthNum)}-01`;
+      const nextMonth = new Date(Date.UTC(year, monthNum, 1)); // first day of next month in UTC
+      const nextMonthStartYmd = `${nextMonth.getUTCFullYear()}-${pad2(nextMonth.getUTCMonth() + 1)}-01`;
+
+      const matchInMonth = {
+        $expr: {
+          $and: [
+            {
+              $gte: [
+                {
+                  $dateToString: {
+                    format: "%Y-%m-%d",
+                    date: "$timestamp",
+                    timezone: ANALYTICS_TZ,
+                  },
+                },
+                monthStartYmd,
+              ],
+            },
+            {
+              $lt: [
+                {
+                  $dateToString: {
+                    format: "%Y-%m-%d",
+                    date: "$timestamp",
+                    timezone: ANALYTICS_TZ,
+                  },
+                },
+                nextMonthStartYmd,
+              ],
+            },
+          ],
+        },
+      };
+
+      const rows = await TrackEvent.aggregate([
+        { $match: matchInMonth },
+        {
+          $group: {
+            _id: {
+              day: { $dayOfMonth: { date: "$timestamp", timezone: ANALYTICS_TZ } },
+              hour: { $hour: { date: "$timestamp", timezone: ANALYTICS_TZ } },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const dayLabels = Array.from({ length: daysInMonth }, (_, i) => String(i + 1));
+      const matrix = Array.from({ length: daysInMonth }, () => Array(24).fill(0));
+      let max = 0;
+
+      for (const r of rows) {
+        const d = (r._id?.day ?? 1) - 1;
+        const h = r._id?.hour ?? 0;
+        if (d >= 0 && d < daysInMonth && h >= 0 && h < 24) {
+          matrix[d][h] += r.count;
+          if (matrix[d][h] > max) max = matrix[d][h];
+        }
+      }
+
+      res.json({
+        view: "monthDays",
+        days: daysInMonth,
+        matrix,
+        dayLabels,
+        max,
+        timezone: ANALYTICS_TZ,
+        monthYear: `${year}-${pad2(monthNum)}`,
+      });
+      return;
+    }
+
+    // ---- Default: weekday × hour heatmap for last N days ----
     const days = Math.min(Math.max(parseInt(String(req.query.days || "30"), 10) || 30, 7), 90);
     const since = new Date();
     since.setDate(since.getDate() - days);
@@ -200,6 +296,7 @@ router.get("/activity-heatmap", async (req, res) => {
     }
 
     res.json({
+      view: "weekday",
       days,
       matrix,
       dayLabels,
