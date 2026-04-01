@@ -163,6 +163,75 @@ router.get("/activity-heatmap", async (req, res) => {
   try {
     const view = String(req.query.view || "weekday");
 
+    // ---- Week range heatmap (start..end, inclusive) ----
+    // view=weekRange&start=YYYY-MM-DD&end=YYYY-MM-DD
+    if (view === "weekRange") {
+      const startYmd = String(req.query.start || "");
+      const endYmd = String(req.query.end || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startYmd) || !/^\d{4}-\d{2}-\d{2}$/.test(endYmd)) {
+        return res.status(400).json({ error: "Invalid start/end. Use YYYY-MM-DD." });
+      }
+
+      const tsYmd = { $dateToString: { format: "%Y-%m-%d", date: "$timestamp", timezone: ANALYTICS_TZ } };
+      const matchInRange = {
+        $expr: { $and: [{ $gte: [tsYmd, startYmd] }, { $lte: [tsYmd, endYmd] }] },
+      };
+
+      const rows = await TrackEvent.aggregate([
+        { $match: matchInRange },
+        {
+          $group: {
+            _id: {
+              ymd: tsYmd,
+              hour: { $hour: { date: "$timestamp", timezone: ANALYTICS_TZ } },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const dayLabels = [];
+      const matrix = [];
+      // build ymd list from start..end in UTC day steps (string compare safe)
+      const [sy, sm, sd] = startYmd.split("-").map((x) => parseInt(x, 10));
+      const [ey, em, ed] = endYmd.split("-").map((x) => parseInt(x, 10));
+      const startUtc = Date.UTC(sy, sm - 1, sd);
+      const endUtc = Date.UTC(ey, em - 1, ed);
+      const maxDays = 8; // safety guard
+      for (let t = startUtc, i = 0; t <= endUtc && i < maxDays; t += 86400000, i += 1) {
+        const d = new Date(t);
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const da = String(d.getUTCDate()).padStart(2, "0");
+        dayLabels.push(`${y}-${m}-${da}`);
+        matrix.push(Array(24).fill(0));
+      }
+
+      let max = 0;
+      const idxByYmd = new Map(dayLabels.map((d, i) => [d, i]));
+      for (const r of rows) {
+        const ymd = r._id?.ymd;
+        const h = r._id?.hour ?? 0;
+        const di = idxByYmd.get(ymd);
+        if (di !== undefined && h >= 0 && h < 24) {
+          matrix[di][h] += r.count;
+          if (matrix[di][h] > max) max = matrix[di][h];
+        }
+      }
+
+      res.json({
+        view: "weekRange",
+        days: dayLabels.length,
+        matrix,
+        dayLabels,
+        max,
+        timezone: ANALYTICS_TZ,
+        start: startYmd,
+        end: endYmd,
+      });
+      return;
+    }
+
     // ---- Month day-of-month heatmap ----
     if (view === "monthDays") {
       const now = new Date();

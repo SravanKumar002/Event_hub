@@ -33,8 +33,8 @@ export const activeSocketSessions = new Map();
 const io = new Server(httpServer, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+  },
 });
 
 io.on("connection", (socket) => {
@@ -100,23 +100,23 @@ if (!MONGO_URL) {
       console.log("✅ Connected to MongoDB");
 
       // Ensure default admin and team users for role-based access.
-      // Admin user: academy_admin / Academysystemadmin@2025
+      // Admin user: academy_admin / Academysystemadmin@26
       let adminUser = await User.findOne({ username: "academy_admin" });
       if (!adminUser) {
         adminUser = await User.create({
           username: "academy_admin",
-          password: "Academysystemadmin@2025",
+          password: "Academysystemadmin@26",
           role: "admin",
         });
         console.log(
-          "🔑 Default admin created (academy_admin / Academysystemadmin@2025)",
+          "🔑 Default admin created (academy_admin / Academysystemadmin@26)",
         );
       } else {
         // Always enforce admin role and a known password so deployments stay in sync
         adminUser.role = "admin";
-        adminUser.password = "Academysystemadmin@2025";
+        adminUser.password = "Academysystemadmin@26";
         await adminUser.save();
-        console.log("🔐 Admin password reset to Academysystemadmin@2025");
+        console.log("🔐 Admin password reset to Academysystemadmin@26");
       }
 
       // Admin user: admin / admin123
