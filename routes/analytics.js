@@ -661,6 +661,185 @@ router.get("/v2-metrics", async (req, res) => {
   }
 });
 
+function slugifyAnalytics(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+const FUNNEL_SLUG_ALIASES = {
+  assignments: "assessments",
+  assignment: "assessments",
+  assessment: "assessments",
+  challenge: "challenges",
+};
+
+function normalizeFunnelSlug(slug) {
+  const s = slugifyAnalytics(slug);
+  return FUNNEL_SLUG_ALIASES[s] || s;
+}
+
+function sanitizeCategorySlugParam(raw) {
+  const s = slugifyAnalytics(String(raw || "")).replace(/[^a-z0-9-]/g, "");
+  return (s && s.slice(0, 80)) || "assessments";
+}
+
+function ctaMatchesCategorySlug(meta, targetSlug) {
+  const t = normalizeFunnelSlug(targetSlug);
+  if (!meta || typeof meta !== "object") return false;
+  if (typeof meta.categorySlug === "string" && normalizeFunnelSlug(meta.categorySlug) === t) {
+    return true;
+  }
+  if (typeof meta.category === "string" && normalizeFunnelSlug(meta.category) === t) {
+    return true;
+  }
+  return false;
+}
+
+function titleCaseFromSlug(slug) {
+  return String(slug || "")
+    .split("-")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// GET: Ordered session funnel per category (landing → category hub → session detail → CTA)
+// ?category=<url-slug> e.g. assessments, placement-insights, workshops
+router.get("/funnel", async (req, res) => {
+  try {
+    const days = Math.min(90, Math.max(1, parseInt(String(req.query.days || "30"), 10) || 30));
+    const slug = sanitizeCategorySlugParam(req.query.category);
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    since.setHours(0, 0, 0, 0);
+
+    const landingPages = new Set(["/", "/announcements"]);
+    const hubPath = `/${slug}`;
+    const detailRegex = new RegExp(`^/${slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/[^/]+$`);
+
+    const match = {
+      timestamp: { $gte: since },
+      $or: [
+        { eventName: "page_view", page: { $in: ["/", "/announcements"] } },
+        { eventName: "page_view", page: hubPath },
+        { eventName: "page_view", page: detailRegex },
+        { eventName: "session_cta_click" },
+      ],
+    };
+
+    const rows = await TrackEvent.find(match, "sessionId timestamp eventName page metadata")
+      .sort({ timestamp: 1 })
+      .lean();
+
+    const bySession = new Map();
+    for (const row of rows) {
+      const sid = row.sessionId;
+      if (!sid) continue;
+      if (!bySession.has(sid)) bySession.set(sid, []);
+      bySession.get(sid).push(row);
+    }
+
+    const categoryTitle = titleCaseFromSlug(slug);
+
+    const isLanding = (e) => e.eventName === "page_view" && landingPages.has(e.page);
+    const isCategoryHub = (e) => e.eventName === "page_view" && e.page === hubPath;
+    const isCategoryDetail = (e) =>
+      e.eventName === "page_view" && detailRegex.test(e.page || "");
+    const isSessionCtaForCategory = (e) =>
+      e.eventName === "session_cta_click" && ctaMatchesCategorySlug(e.metadata, slug);
+
+    let nLanding = 0;
+    let nHub = 0;
+    let nDetail = 0;
+    let nCta = 0;
+
+    for (const [, evs] of bySession) {
+      let landed = false;
+      let hub = false;
+      let detail = false;
+      let cta = false;
+
+      for (const e of evs) {
+        if (!landed && isLanding(e)) {
+          landed = true;
+          continue;
+        }
+        if (landed && !hub && isCategoryHub(e)) {
+          hub = true;
+          continue;
+        }
+        if (landed && !detail && isCategoryDetail(e)) {
+          if (!hub) hub = true;
+          detail = true;
+          continue;
+        }
+        if (landed && hub && detail && !cta && isSessionCtaForCategory(e)) {
+          cta = true;
+          break;
+        }
+      }
+
+      if (landed) {
+        nLanding += 1;
+        if (hub) nHub += 1;
+        if (hub && detail) nDetail += 1;
+        if (hub && detail && cta) nCta += 1;
+      }
+    }
+
+    const counts = [nLanding, nHub, nDetail, nCta];
+    const steps = [
+      {
+        id: "landing",
+        label: "Home / landing",
+        description: "Visited / or /announcements (Announcements tab entry)",
+        count: counts[0],
+      },
+      {
+        id: "category_hub",
+        label: `${categoryTitle} — category`,
+        description: `Opened the ${categoryTitle} list (${hubPath})`,
+        count: counts[1],
+      },
+      {
+        id: "session_detail",
+        label: "Session detail",
+        description: `Opened an event in this category (${hubPath}/event-slug)`,
+        count: counts[2],
+      },
+      {
+        id: "cta",
+        label: "CTA click",
+        description: `Join / Register / Watch on an event in ${categoryTitle}`,
+        count: counts[3],
+      },
+    ].map((s, i) => {
+      const prev = i > 0 ? counts[i - 1] : null;
+      const conversionFromPrevious =
+        prev && prev > 0 ? Number(((s.count / prev) * 100).toFixed(1)) : null;
+      const dropoffFromPrevious =
+        prev && prev > 0 ? Number(((1 - s.count / prev) * 100).toFixed(1)) : null;
+      return { ...s, conversionFromPrevious, dropoffFromPrevious };
+    });
+
+    res.json({
+      days,
+      categorySlug: slug,
+      categoryTitle,
+      analyticsTimezone: ANALYTICS_TZ,
+      since: since.toISOString(),
+      sessionsEvaluated: bySession.size,
+      steps,
+    });
+  } catch (err) {
+    console.error("funnel error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // GET: Realtime
 router.get("/realtime", (req, res) => {
   const active = Array.from(activeSocketSessions.values());
